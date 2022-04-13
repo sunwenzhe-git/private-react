@@ -1,3 +1,9 @@
+/**
+ * @description: 第一次分享时的render方法
+ * @param {*} element
+ * @param {*} container
+ * @return {*}
+ */
 export default function render(element, container) {
   const dom =
     element.type == "TEXT_ELEMENT"

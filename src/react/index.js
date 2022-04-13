@@ -1,5 +1,3 @@
-import { react } from "./createElement";
-import render from "./render";
-import { useState } from "./hooks";
+import { react, ReactDOM, useState } from "./react";
 
-export { react, render, useState };
+export { react, ReactDOM, useState };

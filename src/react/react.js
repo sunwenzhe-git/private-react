@@ -1,12 +1,26 @@
-import createElement from "./createElement";
-import render from "./render";
 import updateDom from "./updateDom";
+import createElement from "./createElement";
 
 let currentRoot = null;
-let workInprogressRoot = null;
-let workInprogressFiber = null;
-let nextUnitOfWork = null;
+// fiber树
+let wipRoot = null;
 let deletions = null;
+
+// 下一个工作单元
+let nextUnitOfWork = null;
+
+// mount阶段首次渲染调用render，构造出fiber树，此时下一个工作单元就是我们当前构造出的fiber
+function render(element, container) {
+  wipRoot = {
+    dom: container,
+    props: {
+      children: [element],
+    },
+    alternate: currentRoot,
+  };
+  deletions = [];
+  nextUnitOfWork = wipRoot;
+}
 
 // 并发模式的工作执行
 function workLoopSync(deadline) {
@@ -18,7 +32,8 @@ function workLoopSync(deadline) {
     shouldYield = deadline.timeRemaining() < 1;
   }
   // 所有工作单元都完成Reconciler阶段，我们一并进行提交操作，commitRoot 里进行所有元素往 dom 树上添加的动作
-  if (!nextUnitOfWork && workInprogressRoot) {
+  if (!nextUnitOfWork && wipRoot) {
+    console.log(wipRoot, "wipRoot");
     commitRoot();
   }
   requestIdleCallback(workLoopSync);
@@ -33,72 +48,70 @@ requestIdleCallback(workLoopSync);
  */
 function performUnitOfWork(fiber) {
   const isFunctionComponent = fiber.type instanceof Function;
-  /**函数式组件有两点不同，如下：
-      函数式组件没有 dom 节点 ？
-      他的 children 属性 不在 props 上，而是 他的返回值
-  */
-  isFunctionComponent && updateFunctionComponent(fiber);
-
-  if (!fiber.dom) {
-    // 创建一个 dom 元素，挂载到 fiber 的 dom 属性
-    fiber.dom = createElement(fiber);
+  if (isFunctionComponent) {
+    updateFunctionComponent(fiber);
+  } else {
+    updateHostComponent(fiber);
   }
-
-  if (fiber.parent) {
-    // 如果有父节点，将 dom 添加到父元素的 dom 上
-    fiber.parent.dom.appendChild(fiber.dom);
+  if (fiber.child) {
+    return fiber.child;
   }
-  const elements = fiber.props.children;
-  reconcileChildren(fiber, elements);
-  let index = 0;
-
-  // 保存上一个 sibling fiber 结构
-  let prevSibling = null;
-
-  while (index < elements.length) {
-    const element = elements[index];
-    const newFiber = {
-      type: element.type,
-      props: element.props,
-      parent: fiber,
-      dom: null,
-    };
-
-    // 第一个子元素作为 child，其余的子元素作为 sibling
-    if (index === 0) {
-      fiber.child = newFiber;
-    } else {
-      prevSibling.sibling = newFiber;
+  let nextFiber = fiber;
+  while (nextFiber) {
+    if (nextFiber.sibling) {
+      return nextFiber.sibling;
     }
-
-    prevSibling = newFiber;
-    index++;
-
-    // step1 如果 有 child fiber ，则返回 child
-    if (fiber.child) {
-      return fiber.child;
-    }
-
-    let nextFiber = fiber;
-
-    while (nextFiber) {
-      // step2 如果有sibling fiber ，则返回 sibling
-      if (nextFiber.sibling) {
-        return nextFiber.sibling;
-      }
-
-      // step3 ，否则返回他的 parent fiber
-      nextFiber = nextFiber.parent;
-    }
+    nextFiber = nextFiber.parent;
   }
 }
 
+let wipFiber = null;
+// 保存当前执行 hook 的索引，区分每次执行是哪个 hook
+let hookIndex = null;
+
+/**
+ * @description: 更新function component
+ * @param {*} fiber
+ * @return {*}
+ */
 function updateFunctionComponent(fiber) {
-  workInprogressFiber = fiber;
-  workInprogressFiber.hooks = [];
+  wipFiber = fiber;
+  hookIndex = 0;
+  wipFiber.hooks = [];
   // 执行函数式组件获取到 children
   const children = [fiber.type(fiber.props)];
   reconcileChildren(fiber, children);
+}
+
+function useState(initial) {
+  const oldHook =
+    wipFiber.alternate &&
+    wipFiber.alternate.hooks &&
+    wipFiber.alternate.hooks[hookIndex];
+  const hook = {
+    state: oldHook ? oldHook.state : initial,
+    queue: [],
+  };
+
+  const actions = oldHook ? oldHook.queue : [];
+  actions.forEach((action) => {
+    hook.state = action(hook.state);
+  });
+
+  const setState = (action) => {
+    hook.queue.push(action);
+    wipRoot = {
+      dom: currentRoot.dom,
+      props: currentRoot.props,
+      alternate: currentRoot,
+    };
+    nextUnitOfWork = wipRoot;
+    deletions = [];
+  };
+
+  wipFiber.hooks.push(hook);
+  hookIndex++;
+  return [hook.state, setState];
 }
 
 /**
@@ -107,21 +120,23 @@ function updateFunctionComponent(fiber) {
  * @param {*} elements
  * @return {*}
  */
-function reconcileChildren(workInprogressFiber, elements) {
+function reconcileChildren(wipFiber, elements) {
   let index = 0;
-  let oldFiber =
-    workInprogressFiber.alternate && workInprogressFiber.alternate.child;
+  let oldFiber = wipFiber.alternate && wipFiber.alternate.child;
   let prevSibling = null;
+
   while (index < elements.length || oldFiber != null) {
     const element = elements[index];
     let newFiber = null;
+
     const sameType = oldFiber && element && element.type == oldFiber.type;
+
     if (sameType) {
       newFiber = {
         type: oldFiber.type,
         props: element.props,
         dom: oldFiber.dom,
-        parent: workInprogressFiber,
+        parent: wipFiber,
         alternate: oldFiber,
         effectTag: "UPDATE",
       };
@@ -131,7 +146,7 @@ function reconcileChildren(workInprogressFiber, elements) {
         type: element.type,
         props: element.props,
         dom: null,
-        parent: workInprogressFiber,
+        parent: wipFiber,
         alternate: null,
         effectTag: "PLACEMENT",
       };
@@ -140,44 +155,20 @@ function reconcileChildren(workInprogressFiber, elements) {
       oldFiber.effectTag = "DELETION";
       deletions.push(oldFiber);
     }
+
     if (oldFiber) {
       oldFiber = oldFiber.sibling;
     }
+
     if (index === 0) {
-      workInprogressFiber.child = newFiber;
+      wipFiber.child = newFiber;
     } else if (element) {
       prevSibling.sibling = newFiber;
     }
+
     prevSibling = newFiber;
+    index++;
   }
-}
-
-function commitRoot() {
-  deletions.forEach(commitWork);
-  commitWork(workInprogressRoot.child);
-  // 渲染完毕后，workInProgress Fiber 树变为 current Fiber 树
-  currentRoot = workInprogressRoot;
-  workInprogressRoot = null;
-}
-
-function commitWork(fiber) {
-  if (!fiber) {
-    return;
-  }
-  let domParentFiber = fiber.parent;
-  while (!domParentFiber.dom) {
-    domParentFiber = domParentFiber.parent;
-  }
-  const domParent = domParentFiber.dom;
-  if (fiber.effectTag === "PLACEMENT" && fiber.dom != null) {
-    domParent.appendChild(fiber.dom);
-  } else if (fiber.effectTag === "UPDATE" && fiber.dom != null) {
-    updateDom(fiber.dom, fiber.alternate.props, fiber.props);
-  } else if (fiber.effectTag === "DELETION") {
-    commitDeletion(fiber, domParent);
-  }
-  commitWork(fiber.child);
-  commitWork(fiber.sibling);
 }
 
 const ReactDOM = {
@@ -186,7 +177,7 @@ const ReactDOM = {
 const react = {
   createElement: createElement,
 };
-export { react, ReactDOM };
+export { ReactDOM, react, useState };
 
 /**
  * @description: 新的树需要删除节点时调用的方法
@@ -200,4 +191,53 @@ function commitDeletion(fiber, domParent) {
   } else {
     commitDeletion(fiber.child, domParent);
   }
+}
+
+function updateHostComponent(fiber) {
+  if (!fiber.dom) {
+    fiber.dom = createDom(fiber);
+  }
+  reconcileChildren(fiber, fiber.props.children);
+}
+
+function createDom(fiber) {
+  const dom =
+    fiber.type == "TEXT_ELEMENT"
+      ? document.createTextNode("")
+      : document.createElement(fiber.type);
+
+  updateDom(dom, {}, fiber.props);
+
+  return dom;
+}
+
+function commitRoot() {
+  deletions.forEach(commitWork);
+  commitWork(wipRoot.child);
+  // 渲染完毕后，workInProgress Fiber 树变为 current Fiber 树
+  currentRoot = wipRoot;
+  wipRoot = null;
+}
+
+function commitWork(fiber) {
+  if (!fiber) {
+    return;
+  }
+
+  let domParentFiber = fiber.parent;
+  while (!domParentFiber.dom) {
+    domParentFiber = domParentFiber.parent;
+  }
+  const domParent = domParentFiber.dom;
+
+  if (fiber.effectTag === "PLACEMENT" && fiber.dom != null) {
+    domParent.appendChild(fiber.dom);
+  } else if (fiber.effectTag === "UPDATE" && fiber.dom != null) {
+    updateDom(fiber.dom, fiber.alternate.props, fiber.props);
+  } else if (fiber.effectTag === "DELETION") {
+    commitDeletion(fiber, domParent);
+  }
+
+  commitWork(fiber.child);
+  commitWork(fiber.sibling);
 }

@@ -1,8 +1,4 @@
-/*
- * @Author: swz
- * @Description:
- */
-import { react, useState, render } from "./react";
+import { react, ReactDOM, useState } from "./react";
 
 function App() {
   const [num, updateNum] = useState(0);
@@ -27,7 +23,7 @@ function App() {
   );
 }
 const container = document.getElementById("root");
-render(App(), container);
+ReactDOM.render(<App />, container);
 // 首先我们可以从函数调用栈入手，理清react各个模块的功能和它们调用的顺序，对源码有个整体的认识
 // 入口-》render-》commit
 // 深度优先遍历fiber树

@@ -1,9 +1,9 @@
 /**
- * @description:
+ * @description: createElement方法，babel取的是react.createElement
  * @param {*} param1
  * @return {*}
  */
-function createElement(type, props, ...children) {
+export default function createElement(type, props, ...children) {
   /**
    * @description: 为文本节点添加类型
    * @param {*} text
@@ -28,7 +28,3 @@ function createElement(type, props, ...children) {
     },
   };
 }
-const react = {
-  createElement: createElement,
-};
-export { react };
